@@ -1,0 +1,156 @@
+# $ProjectId = 347
+# $UserId = 243
+
+param (
+    [string]$ApiKey,
+    [string]$RedmineUrl,
+    [string]$CsvPath,
+    [int]$ProjectId,
+    [int]$UserId
+)
+
+if (-not $ApiKey -or -not $RedmineUrl -or -not $CsvPath -or -not $ProjectId -or -not $UserId) {
+    Write-Error "Missing required parameters. Usage: powershell -File script.ps1 -ApiKey <token> -RedmineUrl <url> -CsvPath <path> -ProjectId <id> -UserId <id>"
+    exit 1
+}
+
+function Compare-HoursPerDay {
+    param (
+        [array]$Data,
+        [array]$UniqueDates,
+        [string]$RedmineUrl,
+        [int]$ProjectId,
+        [int]$UserId,
+        [string]$ApiKey
+    )
+
+    foreach ($date in $UniqueDates) {
+        # Sum of hours from CSV for the given day
+        $csvHoursSum = ($Data | Where-Object { $_.data -eq $date } | ForEach-Object { [double]($_.godzin -replace ',', '.') }) | Measure-Object -Sum
+        $csvTotal = $csvHoursSum.Sum
+
+        # Get time entries from Redmine for the given day and user ID
+        $redmineEntries = Invoke-RestMethod -Uri "$RedmineUrl/time_entries.json?project_id=$ProjectId&spent_on=$date&user_id=$UserId" `
+            -Headers @{ "X-Redmine-API-Key" = $ApiKey }
+
+        $redmineHoursSum = ($redmineEntries.time_entries | Where-Object { $_.spent_on -eq $date } | ForEach-Object { $_.hours }) | Measure-Object -Sum
+        $redmineTotal = $redmineHoursSum.Sum
+
+        Write-Host "Date: $date | Total hours in CSV: $csvTotal | Total hours in Redmine (user $UserId): $redmineTotal"
+
+        if ($csvTotal -eq $redmineTotal) {
+            Write-Host "Total hours match for $date (user $UserId)."
+            return $true
+        } else {
+            Write-Warning "Total hours DO NOT match for $date (user $UserId)!"
+            return $false
+        }
+    }
+}
+
+function Get-ActivityMap {
+    param (
+        [string]$RedmineUrl,
+        [int]$ProjectId,
+        [string]$ApiKey
+    )
+
+    $activitiesResponse = Invoke-RestMethod -Uri "$RedmineUrl/projects/$ProjectId.json?include=time_entry_activities" `
+        -Headers @{ "X-Redmine-API-Key" = $ApiKey }
+
+    $activityMap = @{}
+    foreach ($act in $activitiesResponse.project.time_entry_activities) {
+        $activityMap[$act.name] = $act.id
+    }
+
+    Write-Host "Fetched time entry activities:"
+    $activityMap.GetEnumerator() | ForEach-Object { Write-Host "$($_.Key) -> $($_.Value)" }
+
+    return $activityMap
+}
+
+function Remove-TimeEntriesForDates {
+    param (
+        [array]$UniqueDates,
+        [string]$RedmineUrl,
+        [int]$ProjectId,
+        [string]$ApiKey,
+        [int]$UserId
+    )
+
+    foreach ($date in $UniqueDates) {
+        # Get time entries from Redmine for the given date and user
+        $entriesToDelete = Invoke-RestMethod -Uri "$RedmineUrl/time_entries.json?project_id=$ProjectId&spent_on=$date&user_id=$UserId" `
+            -Headers @{ "X-Redmine-API-Key" = $ApiKey }
+
+        foreach ($entry in $entriesToDelete.time_entries) {
+            $entryId = $entry.id
+            Invoke-RestMethod -Uri "$RedmineUrl/time_entries/$entryId.json" `
+                -Method DELETE `
+                -Headers @{ "X-Redmine-API-Key" = $ApiKey } | Out-Null
+            Write-Host "Deleted time entry with ID $entryId for date $date and user $UserId"
+        }
+    }
+}
+
+function Add-TimeEntriesFromCsv {
+    param (
+        [array]$Data,
+        [hashtable]$ActivityMap,
+        [string]$RedmineUrl,
+        [int]$ProjectId,
+        [string]$ApiKey,
+        [int]$UserId
+    )
+
+    foreach ($row in $Data) {
+        $spentOn = $row.data
+        $issueId = [int]$row.zagadnienie
+        $hours = [double]($row.godzin -replace ',', '.')
+        $activityName = $row.activity
+
+        if ($ActivityMap.ContainsKey($activityName)) {
+            $activityId = $ActivityMap[$activityName]
+        } else {
+            Write-Warning "Activity '$activityName' not found; entry skipped."
+            continue
+        }
+
+        $body = @{
+            time_entry = @{
+                project_id = $ProjectId
+                issue_id = $issueId
+                spent_on = $spentOn
+                hours = $hours
+                activity_id = $activityId
+                user_id = $UserId
+            }
+        } | ConvertTo-Json -Depth 4
+
+        Invoke-RestMethod -Uri "$RedmineUrl/time_entries.json" `
+            -Method POST `
+            -Headers @{ "X-Redmine-API-Key" = $ApiKey; "Content-Type" = "application/json" } `
+            -Body $body | Out-Null
+
+        Write-Host "Added time entry [Project: $ProjectId, Issue: $issueId, Hours: $hours, Activity: $activityName, User: $UserId]"
+    }
+}
+
+# Load data from CSV
+$data = Import-Csv -Path $csvPath -Delimiter ','
+
+$uniqueDates = $data | Select-Object -ExpandProperty data | Sort-Object -Unique
+
+$isEquals = Compare-HoursPerDay -Data $data -UniqueDates $uniqueDates -RedmineUrl $RedmineUrl -ProjectId $ProjectId -UserId $UserId -ApiKey $ApiKey
+if ($isEquals) {
+    Write-Host "No differences in hours; exiting."
+    exit 0
+}
+
+$activityMap = Get-ActivityMap -RedmineUrl $RedmineUrl -ProjectId $ProjectId -ApiKey $ApiKey
+
+Remove-TimeEntriesForDates -UniqueDates $uniqueDates -RedmineUrl $RedmineUrl -ProjectId $ProjectId -UserId $UserId -ApiKey $ApiKey
+
+Add-TimeEntriesFromCsv -Data $data -ActivityMap $activityMap -RedmineUrl $RedmineUrl -ProjectId $ProjectId -UserId $UserId -ApiKey $ApiKey
+
+Compare-HoursPerDay -Data $data -UniqueDates $uniqueDates -RedmineUrl $RedmineUrl -ProjectId $ProjectId -UserId $UserId -ApiKey $ApiKey | Out-Null
