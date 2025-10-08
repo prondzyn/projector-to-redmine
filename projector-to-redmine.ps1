@@ -110,11 +110,13 @@ function Add-TimeEntriesFromCsv {
         $activityName = $row.activity
 
         # Skip row if any required field is empty
-        if ([string]::IsNullOrWhiteSpace($spentOn) -or
-            [string]::IsNullOrWhiteSpace($issueId) -or
-            [string]::IsNullOrWhiteSpace($hours) -or
-            [string]::IsNullOrWhiteSpace($activityName)) {
-            Write-Warning "Skipped row due to missing required field(s)."
+        $missingFields = @()
+        if ([string]::IsNullOrWhiteSpace($spentOn)) { $missingFields += "data" }
+        if ([string]::IsNullOrWhiteSpace($issueId)) { $missingFields += "zagadnienie" }
+        if ([string]::IsNullOrWhiteSpace($hours)) { $missingFields += "godzin" }
+        if ([string]::IsNullOrWhiteSpace($activityName)) { $missingFields += "activity" }
+        if ($missingFields.Count -gt 0) {
+            Write-Warning "Skipped row due to missing required field(s): $($missingFields -join ', ')"
             continue
         }
 
