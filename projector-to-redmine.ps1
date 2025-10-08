@@ -105,9 +105,21 @@ function Add-TimeEntriesFromCsv {
 
     foreach ($row in $Data) {
         $spentOn = $row.data
-        $issueId = [int]$row.zagadnienie
-        $hours = [double]($row.godzin -replace ',', '.')
+        $issueId = $row.zagadnienie
+        $hours = $row.godzin
         $activityName = $row.activity
+
+        # Skip row if any required field is empty
+        if ([string]::IsNullOrWhiteSpace($spentOn) -or
+            [string]::IsNullOrWhiteSpace($issueId) -or
+            [string]::IsNullOrWhiteSpace($hours) -or
+            [string]::IsNullOrWhiteSpace($activityName)) {
+            Write-Warning "Skipped row due to missing required field(s)."
+            continue
+        }
+
+        $issueId = [int]$issueId
+        $hours = [double]($hours -replace ',', '.')
 
         if ($ActivityMap.ContainsKey($activityName)) {
             $activityId = $ActivityMap[$activityName]
