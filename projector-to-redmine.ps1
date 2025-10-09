@@ -19,14 +19,19 @@ function Get-CsvData {
         [string]$CsvPath
     )
     if ($CsvPath -match '^(https?://)') {
-        Write-Host "Downloading CSV file from URL: $CsvPath"
-        $response = Invoke-WebRequest -Uri $CsvPath
-        if ($response.StatusCode -ne 200) {
-            Write-Error "Failed to download CSV file from the provided URL. Status: $($response.StatusCode)"
+    Write-Host "Downloading CSV file from URL: $CsvPath"
+        try {
+            $response = Invoke-WebRequest -Uri $CsvPath -ErrorAction Stop
+            if ($response.StatusCode -ne 200) {
+                Write-Error "Failed to download CSV file from the provided URL. Status: $($response.StatusCode)"
+                exit 2
+            }
+            $csvContent = $response.Content
+            return $csvContent | ConvertFrom-Csv
+        } catch {
+            Write-Error "`nError downloading CSV file from URL: $CsvPath`nException: $($_.Exception.Message)`nCheck if the file exists and if the URL is correct.`n"
             exit 2
         }
-        $csvContent = $response.Content
-        return $csvContent | ConvertFrom-Csv
     } else {
         Write-Host "Loading CSV file locally: $CsvPath"
         return Import-Csv -Path $CsvPath -Delimiter ','
