@@ -14,6 +14,25 @@ if (-not $ApiKey -or -not $RedmineUrl -or -not $CsvPath -or -not $ProjectId -or 
     exit 1
 }
 
+function Get-CsvData {
+    param (
+        [string]$CsvPath
+    )
+    if ($CsvPath -match '^(https?://)') {
+        Write-Host "Pobieranie pliku CSV z URL: $CsvPath"
+        $response = Invoke-WebRequest -Uri $CsvPath
+        if ($response.StatusCode -ne 200) {
+            Write-Error "Nie udało się pobrać pliku CSV z podanego URL. Status: $($response.StatusCode)"
+            exit 2
+        }
+        $csvContent = $response.Content
+        return $csvContent | ConvertFrom-Csv
+    } else {
+        Write-Host "Wczytywanie pliku CSV lokalnie: $CsvPath"
+        return Import-Csv -Path $CsvPath -Delimiter ','
+    }
+}
+
 function Compare-HoursPerDay {
     param (
         [array]$Data,
@@ -150,8 +169,7 @@ function Add-TimeEntriesFromCsv {
     }
 }
 
-# Load data from CSV
-$data = Import-Csv -Path $csvPath -Delimiter ','
+$data = Get-CsvData -CsvPath $CsvPath
 
 $uniqueDates = $data | Select-Object -ExpandProperty data | Sort-Object -Unique
 
