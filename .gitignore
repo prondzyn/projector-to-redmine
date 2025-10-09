@@ -1,2 +1,4 @@
 *.csv
 projector-to-redmine-prod-execution.ps1
+projector-to-redmine-prod-execution.bat
+log.txt
