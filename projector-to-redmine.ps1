@@ -72,6 +72,33 @@ function Compare-HoursPerDay {
     }
 }
 
+function Get-RedmineTimeEntryCount {
+    param (
+        [string]$RedmineUrl,
+        [int]$ProjectId,
+        [int]$UserId,
+        [string]$ApiKey
+    )
+    $date = (Get-Date).ToString("yyyy-MM-dd")
+    $response = Invoke-RestMethod -Uri "$RedmineUrl/time_entries.json?project_id=$ProjectId&spent_on=$date&user_id=$UserId" `
+        -Headers @{ "X-Redmine-API-Key" = $ApiKey }
+    return $response.time_entries.Count
+}
+
+function Compare-RecordCount {
+    param (
+        [array]$Data,
+        [int]$RedmineCount
+    )
+
+    # Count records in CSV (excluding header, which Import-Csv already does)
+    $csvCount = $Data.Count
+
+    $difference = $RedmineCount - $csvCount
+    Write-Host "CSV records: $csvCount | Redmine time entries: $RedmineCount | Difference: $difference"
+    return $difference
+}
+
 function Get-ActivityMap {
     param (
         [string]$RedmineUrl,
@@ -124,10 +151,16 @@ function Add-TimeEntriesFromCsv {
         [string]$RedmineUrl,
         [int]$ProjectId,
         [string]$ApiKey,
-        [int]$UserId
+        [int]$UserId,
+        [int]$SkipFirstN = 0
     )
 
-    foreach ($row in $Data) {
+    $rowsToProcess = $Data
+    if ($SkipFirstN -gt 0) {
+        $rowsToProcess = $Data[$SkipFirstN..($Data.Count - 1)]
+    }
+
+    foreach ($row in $rowsToProcess) {
         $spentOn = $row.data
         $issueId = $row.zagadnienie
         $hours = $row.godzin
@@ -178,16 +211,36 @@ $data = Get-CsvData -CsvPath $CsvPath
 
 $uniqueDates = $data | Select-Object -ExpandProperty data | Sort-Object -Unique
 
-$isEquals = Compare-HoursPerDay -Data $data -UniqueDates $uniqueDates -RedmineUrl $RedmineUrl -ProjectId $ProjectId -UserId $UserId -ApiKey $ApiKey
-if ($isEquals) {
-    Write-Host "No differences in hours; exiting."
+$hoursAreEqual = Compare-HoursPerDay -Data $data -UniqueDates $uniqueDates -RedmineUrl $RedmineUrl -ProjectId $ProjectId -UserId $UserId -ApiKey $ApiKey
+
+$redmineCount = Get-RedmineTimeEntryCount -RedmineUrl $RedmineUrl -ProjectId $ProjectId -UserId $UserId -ApiKey $ApiKey
+$recordDifference = Compare-RecordCount -Data $data -RedmineCount $redmineCount
+
+if ($hoursAreEqual -and $recordDifference -eq 0) {
+    Write-Host "No differences found; exiting."
     exit 0
+}
+
+$cleanRedmine = $false
+
+if (-not $hoursAreEqual -and $recordDifference -eq 0) {
+    Write-Host "Hours differ but record counts match; Setting Redmine to clean."
+    $cleanRedmine = $true
+}
+
+if ($recordDifference -gt 0) {
+    Write-Host "More records in Redmine than in CSV; Setting Redmine to clean."
+    $cleanRedmine = $true
+}
+
+if ($cleanRedmine) {
+    Write-Host "Cleaning Redmine; resetting record count."
+    Remove-TimeEntriesForDates -UniqueDates $uniqueDates -RedmineUrl $RedmineUrl -ProjectId $ProjectId -UserId $UserId -ApiKey $ApiKey
+    $redmineCount = 0
 }
 
 $activityMap = Get-ActivityMap -RedmineUrl $RedmineUrl -ProjectId $ProjectId -ApiKey $ApiKey
 
-Remove-TimeEntriesForDates -UniqueDates $uniqueDates -RedmineUrl $RedmineUrl -ProjectId $ProjectId -UserId $UserId -ApiKey $ApiKey
-
-Add-TimeEntriesFromCsv -Data $data -ActivityMap $activityMap -RedmineUrl $RedmineUrl -ProjectId $ProjectId -UserId $UserId -ApiKey $ApiKey
+Add-TimeEntriesFromCsv -Data $data -ActivityMap $activityMap -RedmineUrl $RedmineUrl -ProjectId $ProjectId -UserId $UserId -ApiKey $ApiKey -SkipFirstN $redmineCount
 
 Compare-HoursPerDay -Data $data -UniqueDates $uniqueDates -RedmineUrl $RedmineUrl -ProjectId $ProjectId -UserId $UserId -ApiKey $ApiKey | Out-Null
