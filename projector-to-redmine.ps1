@@ -207,7 +207,34 @@ function Add-TimeEntriesFromCsv {
     }
 }
 
-$data = Get-CsvData -CsvPath $CsvPath
+function Get-FilteredCsvData {
+    param (
+        [string]$CsvPath
+    )
+
+    $data = Get-CsvData -CsvPath $CsvPath
+
+    $filteredData = @()
+
+    foreach ($row in $data) {
+        $missingFields = @()
+        if ([string]::IsNullOrWhiteSpace($row.data))   { $missingFields += "data" }
+        if ([string]::IsNullOrWhiteSpace($row.zagadnienie))   { $missingFields += "zagadnienie" }
+        if ([string]::IsNullOrWhiteSpace($row.godzin))     { $missingFields += "godzin" }
+        if ([string]::IsNullOrWhiteSpace($row.activity)) { $missingFields += "activity" }
+
+        if ($missingFields.Count -gt 0) {
+            Write-Warning "Skipped row due to missing required field(s): $($missingFields -join ', ')"
+            continue
+        }
+
+        $filteredData += $row
+    }
+
+    return $filteredData
+}
+
+$data = Get-FilteredCsvData -CsvPath $CsvPath
 
 $uniqueDates = $data | Select-Object -ExpandProperty data | Sort-Object -Unique
 
