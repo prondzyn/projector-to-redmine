@@ -80,8 +80,13 @@ function Get-RedmineTimeEntryCount {
         [string]$ApiKey
     )
     $date = (Get-Date).ToString("yyyy-MM-dd")
-    $response = Invoke-RestMethod -Uri "$RedmineUrl/time_entries.json?project_id=$ProjectId&spent_on=$date&user_id=$UserId" `
-        -Headers @{ "X-Redmine-API-Key" = $ApiKey }
+    try {
+        $response = Invoke-RestMethod -Uri "$RedmineUrl/time_entries.json?project_id=$ProjectId&spent_on=$date&user_id=$UserId" `
+            -Headers @{ "X-Redmine-API-Key" = $ApiKey }
+    } catch {
+        Write-Error "`nFailed to fetch time entries from Redmine:`nException: $($_.Exception.Message)`n"
+        exit 4
+    }
     return $response.time_entries.Count
 }
 
@@ -106,8 +111,13 @@ function Get-ActivityMap {
         [string]$ApiKey
     )
 
-    $activitiesResponse = Invoke-RestMethod -Uri "$RedmineUrl/projects/$ProjectId.json?include=time_entry_activities" `
-        -Headers @{ "X-Redmine-API-Key" = $ApiKey }
+    try {
+        $activitiesResponse = Invoke-RestMethod -Uri "$RedmineUrl/projects/$ProjectId.json?include=time_entry_activities" `
+            -Headers @{ "X-Redmine-API-Key" = $ApiKey }
+    } catch {
+        Write-Error "`nFailed to fetch time entry activities from Redmine:`nException: $($_.Exception.Message)`n"
+        exit 5
+    }
 
     $activityMap = @{}
     foreach ($act in $activitiesResponse.project.time_entry_activities) {
@@ -241,6 +251,7 @@ $uniqueDates = $data | Select-Object -ExpandProperty data | Sort-Object -Unique
 $hoursAreEqual = Compare-HoursPerDay -Data $data -UniqueDates $uniqueDates -RedmineUrl $RedmineUrl -ProjectId $ProjectId -UserId $UserId -ApiKey $ApiKey
 
 $redmineCount = Get-RedmineTimeEntryCount -RedmineUrl $RedmineUrl -ProjectId $ProjectId -UserId $UserId -ApiKey $ApiKey
+
 $recordDifference = Compare-RecordCount -Data $data -RedmineCount $redmineCount
 
 if ($hoursAreEqual -and $recordDifference -eq 0) {
